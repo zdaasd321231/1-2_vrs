@@ -219,6 +219,8 @@ function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [vncConnection, setVncConnection] = useState(null);
+  const [fileManagerConnection, setFileManagerConnection] = useState(null);
 
   // Загрузка данных при монтировании компонента
   useEffect(() => {
