@@ -439,6 +439,7 @@ function App() {
                   onGenerateInstaller={handleGenerateInstaller}
                   onConnect={handleConnect}
                   onDelete={handleDeleteConnection}
+                  onFileManager={handleOpenFileManager}
                 />
               ))}
             </div>
