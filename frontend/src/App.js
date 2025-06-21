@@ -494,6 +494,22 @@ function App() {
         onClose={() => setIsCreateModalOpen(false)}
         onCreateConnection={handleCreateConnection}
       />
+
+      {/* VNC Viewer */}
+      {vncConnection && (
+        <VncViewer
+          connection={vncConnection}
+          onClose={() => setVncConnection(null)}
+        />
+      )}
+
+      {/* File Manager */}
+      {fileManagerConnection && (
+        <FileManager
+          connection={fileManagerConnection}
+          onClose={() => setFileManagerConnection(null)}
+        />
+      )}
     </div>
   );
 }
