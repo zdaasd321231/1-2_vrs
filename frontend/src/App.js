@@ -284,9 +284,28 @@ function App() {
     }
   };
 
-  const handleConnect = (connectionId) => {
-    // В будущем здесь будет открытие VNC viewer
-    alert(`VNC подключение к ${connectionId} (будет реализовано в следующей фазе)`);
+  const handleConnect = async (connectionId) => {
+    try {
+      const response = await axios.post(`${API}/connect/${connectionId}`);
+      const connectionData = connections.find(c => c.id === connectionId);
+      
+      setVncConnection({
+        ...connectionData,
+        ...response.data
+      });
+    } catch (err) {
+      console.error('Ошибка подключения к VNC:', err);
+      alert('Ошибка подключения к VNC');
+    }
+  };
+
+  const handleOpenFileManager = (connectionId) => {
+    const connectionData = connections.find(c => c.id === connectionId);
+    if (connectionData && connectionData.status === 'active') {
+      setFileManagerConnection(connectionData);
+    } else {
+      alert('Соединение неактивно. Файловый менеджер доступен только для активных соединений.');
+    }
   };
 
   const handleDeleteConnection = async (connectionId) => {
