@@ -8,7 +8,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 // Компонент для отображения карточки VNC соединения
-const ConnectionCard = ({ connection, onGenerateInstaller, onConnect, onDelete }) => {
+const ConnectionCard = ({ connection, onGenerateInstaller, onConnect, onDelete, onFileManager }) => {
   const getStatusColor = (status) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-800 border-green-200';
