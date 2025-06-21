@@ -403,18 +403,275 @@ async def get_statistics():
         "timestamp": datetime.utcnow()
     }
 
-# Legacy status endpoints (for compatibility)
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
+# File Management Operations
+@api_router.get("/files/{connection_id}")
+async def list_files(connection_id: str, path: str = "/"):
+    """Получить список файлов на удаленной машине"""
+    connection = await db.vnc_connections.find_one({"id": connection_id})
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    if connection["status"] != "active":
+        raise HTTPException(status_code=400, detail="Connection is not active")
+    
+    # Симуляция файловой системы (в реальной системе это будет RPC к удаленной машине)
+    mock_files = [
+        {
+            "name": "Documents",
+            "type": "directory",
+            "size": 0,
+            "modified": "2025-06-20T10:30:00Z",
+            "path": "/Documents"
+        },
+        {
+            "name": "Desktop",
+            "type": "directory", 
+            "size": 0,
+            "modified": "2025-06-20T09:15:00Z",
+            "path": "/Desktop"
+        },
+        {
+            "name": "report.pdf",
+            "type": "file",
+            "size": 2048576,
+            "modified": "2025-06-21T08:45:00Z",
+            "path": "/report.pdf"
+        },
+        {
+            "name": "data.xlsx",
+            "type": "file", 
+            "size": 1024000,
+            "modified": "2025-06-20T16:20:00Z",
+            "path": "/data.xlsx"
+        },
+        {
+            "name": "backup.zip",
+            "type": "file",
+            "size": 10485760,
+            "modified": "2025-06-19T14:10:00Z", 
+            "path": "/backup.zip"
+        }
+    ]
+    
+    await log_activity(connection_id, "file_list", f"Listed files in {path}")
+    
+    return {
+        "connection_id": connection_id,
+        "current_path": path,
+        "files": mock_files
+    }
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
+@api_router.post("/files/{connection_id}/upload")
+async def upload_file(connection_id: str, file: UploadFile = File(...), remote_path: str = "/"):
+    """Загрузить файл на удаленную машину"""
+    connection = await db.vnc_connections.find_one({"id": connection_id})
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    if connection["status"] != "active":
+        raise HTTPException(status_code=400, detail="Connection is not active")
+    
+    # Создать директорию для загруженных файлов
+    upload_dir = Path("/tmp/vnc_uploads") / connection_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Сохранить файл
+    file_path = upload_dir / file.filename
+    async with aiofiles.open(file_path, 'wb') as f:
+        content = await file.read()
+        await f.write(content)
+    
+    # Вычислить контрольную сумму
+    checksum = hashlib.md5(content).hexdigest()
+    
+    # Создать запись о передаче файла
+    file_transfer = FileTransfer(
+        connection_id=connection_id,
+        filename=file.filename,
+        file_size=len(content),
+        file_path=str(file_path),
+        transfer_type="upload",
+        checksum=checksum
+    )
+    
+    await db.file_transfers.insert_one(file_transfer.dict())
+    await log_activity(connection_id, "file_upload", f"Uploaded {file.filename} ({len(content)} bytes)")
+    
+    return {
+        "message": "File uploaded successfully",
+        "filename": file.filename,
+        "size": len(content),
+        "checksum": checksum,
+        "remote_path": f"{remote_path.rstrip('/')}/{file.filename}"
+    }
+
+@api_router.get("/files/{connection_id}/download")
+async def download_file(connection_id: str, file_path: str):
+    """Скачать файл с удаленной машины"""
+    connection = await db.vnc_connections.find_one({"id": connection_id})
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    if connection["status"] != "active":
+        raise HTTPException(status_code=400, detail="Connection is not active")
+    
+    # Симуляция скачивания файла (создаем тестовый файл)
+    filename = os.path.basename(file_path)
+    content = f"Mock file content for {filename} from {connection['name']}\nGenerated at: {datetime.utcnow()}\nFile path: {file_path}".encode()
+    
+    # Создать запись о передаче файла
+    file_transfer = FileTransfer(
+        connection_id=connection_id,
+        filename=filename,
+        file_size=len(content),
+        file_path=file_path,
+        transfer_type="download",
+        checksum=hashlib.md5(content).hexdigest()
+    )
+    
+    await db.file_transfers.insert_one(file_transfer.dict())
+    await log_activity(connection_id, "file_download", f"Downloaded {filename} ({len(content)} bytes)")
+    
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
+    )
+
+@api_router.get("/files/{connection_id}/transfers", response_model=List[FileTransfer])
+async def get_file_transfers(connection_id: str, limit: int = 50):
+    """Получить историю передач файлов"""
+    transfers = await db.file_transfers.find({"connection_id": connection_id}).sort("timestamp", -1).limit(limit).to_list(limit)
+    return [FileTransfer(**transfer) for transfer in transfers]
+
+# WebSocket для VNC прокси
+websocket_connections = {}
+
+@app.websocket("/ws/vnc/{connection_id}")
+async def vnc_websocket(websocket: WebSocket, connection_id: str):
+    """WebSocket прокси для VNC соединения"""
+    await websocket.accept()
+    
+    connection = await db.vnc_connections.find_one({"id": connection_id})
+    if not connection:
+        await websocket.close(code=4004, reason="Connection not found")
+        return
+    
+    if connection["status"] != "active":
+        await websocket.close(code=4003, reason="Connection not active") 
+        return
+    
+    # Добавить соединение в активные
+    websocket_connections[connection_id] = websocket
+    
+    try:
+        await log_activity(connection_id, "vnc_websocket_connect", f"WebSocket VNC session started")
+        
+        # Симуляция VNC данных (в реальной системе здесь будет прокси к VNC серверу)
+        while True:
+            try:
+                # Получить данные от клиента
+                data = await websocket.receive_text()
+                
+                # В реальной реализации здесь будет:
+                # 1. Передача данных на VNC сервер
+                # 2. Получение ответа от VNC сервера  
+                # 3. Отправка ответа обратно клиенту
+                
+                # Пока что отправляем подтверждение
+                await websocket.send_text(f"VNC_RESPONSE: {data}")
+                
+            except WebSocketDisconnect:
+                break
+                
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        # Удалить соединение из активных
+        websocket_connections.pop(connection_id, None)
+        await log_activity(connection_id, "vnc_websocket_disconnect", "WebSocket VNC session ended")
+
+# VNC Screen capture (симуляция)
+@api_router.get("/vnc/{connection_id}/screenshot")
+async def get_vnc_screenshot(connection_id: str):
+    """Получить скриншот VNC экрана"""
+    connection = await db.vnc_connections.find_one({"id": connection_id})
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    if connection["status"] != "active":
+        raise HTTPException(status_code=400, detail="Connection is not active")
+    
+    # Создаем простой тестовый "скриншот" SVG
+    svg_content = f'''<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" fill="#1e40af"/>
+    <text x="400" y="250" text-anchor="middle" fill="white" font-size="24" font-family="Arial">
+        VNC Screen: {connection['name']}
+    </text>
+    <text x="400" y="300" text-anchor="middle" fill="white" font-size="16" font-family="Arial">
+        IP: {connection['ip_address']}
+    </text>
+    <text x="400" y="330" text-anchor="middle" fill="white" font-size="14" font-family="Arial">
+        Screenshot at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}
+    </text>
+    <rect x="100" y="400" width="600" height="100" fill="white" stroke="black" stroke-width="2"/>
+    <text x="400" y="440" text-anchor="middle" fill="black" font-size="16" font-family="Arial">
+        Simulated Desktop Environment
+    </text>
+    <text x="400" y="460" text-anchor="middle" fill="black" font-size="12" font-family="Arial">
+        This is a mock VNC screen for demonstration
+    </text>
+</svg>'''
+    
+    await log_activity(connection_id, "vnc_screenshot", "Screenshot captured")
+    
+    return StreamingResponse(
+        io.StringIO(svg_content),
+        media_type="image/svg+xml"
+    )
+
+# WebSocket для файлового менеджера
+@app.websocket("/ws/files/{connection_id}")
+async def file_manager_websocket(websocket: WebSocket, connection_id: str):
+    """WebSocket for real-time file operations"""
+    await websocket.accept()
+    
+    try:
+        while True:
+            data = await websocket.receive_json()
+            command = data.get("command")
+            
+            if command == "refresh":
+                # Отправить обновленный список файлов
+                files_response = await list_files(connection_id, data.get("path", "/"))
+                await websocket.send_json({
+                    "type": "file_list",
+                    "data": files_response
+                })
+            elif command == "ping":
+                await websocket.send_json({"type": "pong"})
+                
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"File manager WebSocket error: {e}")
+
+# System utilities
+@api_router.get("/system/info")
+async def get_system_info():
+    """Получить информацию о системе"""
+    return {
+        "vnc_management_version": "1.0.0",
+        "total_websocket_connections": len(websocket_connections),
+        "active_websockets": list(websocket_connections.keys()),
+        "system_time": datetime.utcnow(),
+        "features": {
+            "vnc_viewer": True,
+            "file_manager": True,
+            "websocket_proxy": True,
+            "screenshot_capture": True
+        }
+    }
 
 # Include the router in the main app
 app.include_router(api_router)
