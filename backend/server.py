@@ -40,7 +40,7 @@ VNC_PORT = 5900
 class VNCConnection(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    ip_address: str
+    ip_address: Optional[str] = None
     location: str
     country: str = "Russia"
     city: str = "Moscow"
