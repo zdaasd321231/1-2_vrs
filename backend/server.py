@@ -291,14 +291,14 @@ async def generate_installer(connection_id: str):
     script_content = generate_powershell_script(connection["installation_key"])
     
     # Создать файл скрипта
-    filename = f"vnc_installer_{connection['name'].replace(' ', '_')}.ps1"
+    filename = f"vnc_installer_{connection['id'][:8]}.ps1"
     
     await log_activity(connection_id, "installer_generated", f"PowerShell installer generated: {filename}")
     
     return StreamingResponse(
         io.StringIO(script_content),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
     )
 
 @api_router.post("/register-machine")
