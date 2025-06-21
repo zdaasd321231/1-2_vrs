@@ -72,12 +72,20 @@ const ConnectionCard = ({ connection, onGenerateInstaller, onConnect, onDelete, 
         </button>
         
         {connection.status === 'active' && (
-          <button
-            onClick={() => onConnect(connection.id)}
-            className="flex-1 bg-green-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-green-700 transition-colors"
-          >
-            🖥️ Подключиться
-          </button>
+          <>
+            <button
+              onClick={() => onConnect(connection.id)}
+              className="flex-1 bg-green-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-green-700 transition-colors"
+            >
+              🖥️ Подключиться
+            </button>
+            <button
+              onClick={() => onFileManager(connection.id)}
+              className="flex-1 bg-purple-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-purple-700 transition-colors"
+            >
+              📁 Файлы
+            </button>
+          </>
         )}
         
         <button
